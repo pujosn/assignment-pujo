@@ -2,49 +2,61 @@
 
 ## Start and verify
 
-1. Copy `.env.example` to `.env`, then replace its passwords with strong values.
-2. Start the database with `docker-compose up -d db`.
-3. Check the configured connection limit:
+1. Mulai database dengan `docker-compose up -d db`.
+2. Cek konfigurasi `max_connections`:
 
-   ```sh
-   docker-compose exec -T db psql -U postgres -d postgres -c "SHOW max_connections;"
+   ```docker exec -it pujo-mifx-db psql -U postgres -d postgres -c "SHOW max_connections;"
+      max_connections 
+      -----------------
+      200
+      (1 row)
    ```
 
-   Expected result: `200`.
+   Output yang diharapkan adalah `200`.
 
-The initialization script creates:
+User yang dibuat saat inisialisasi:
 
-| Role | Access |
+| User | Akses |
 | --- | --- |
-| `sre_app` | Login role; owns database `sre` and has full access. |
-| `sre_readonly` | Login role; has `SELECT` on current and future public-schema tables. |
+| `sre` | Login user, owner database `sre`, full access. |
+| `sre_read` | Login user, read-only (`SELECT`) pada tabel yang ada dan tabel baru di schema `public`. |
 
-The passwords are supplied only through `.env`, which Git ignores.
 
-## Slow affiliate count: analysis and resolution
 
-The provided `client` schema has a primary key only on `id`. `client_id` is not indexed, so this query scans all client rows to find a matching `client_id`:
+## Analisis Penyelesaian Masalah: Lonjakan CPU Database & Query Lambat
 
-```sql
-SELECT count(affiliates)
-FROM client
-WHERE client_id = 'this_is_client_id';
+Ketika tim back-office melakukan pengecekan jumlah afiliasi, penggunaan CPU pada database melonjak signifikan dan penarikan data menjadi sangat lambat. Di sisi lain, resource pada dashboard terpantau normal. Hal ini menandakan bahwa masalah utama (bottleneck) murni terjadi pada lapisan database.
+
+```
+select count(affiliates) from client where client_id = 'this_is_client_id';
 ```
 
-Under concurrent requests, repeated sequential scans explain the database CPU spike. Confirm it first in a non-production environment with:
+Setelah memeriksa skema tabel client, ditemukan dua akar masalah utama:
 
-```sql
-EXPLAIN (ANALYZE, BUFFERS)
-SELECT count(affiliates)
-FROM client
-WHERE client_id = 'this_is_client_id';
-```
+1. Tidak Ada Index (Penyebab Utama): Pada bagian Indexes, tertulis "No index defined" untuk kolom client_id. Karena kolom
+   yang digunakan pada klausa WHERE tidak di-index, PostgreSQL terpaksa melakukan Sequential Scan (Full Table Scan). Database harus membaca seluruh baris tabel satu per satu dari disk/memori hanya untuk mencari client_id yang cocok. Proses ini memakan komputasi CPU yang sangat besar dan membuat query semakin lambat seiring bertambahnya data.
+2. Agregasi Kurang Efisien: Query menggunakan count(affiliates). Perintah ini memaksa database untuk mengecek satu per satu
+   apakah nilai di dalam kolom affiliates bernilai NULL atau tidak pada setiap baris yang cocok, bukan langsung menghitung total barisnya.
 
-Then create the lookup index without blocking writes:
+Strategi Penyelesaian & Langkah Implementasi
 
-```sql
-CREATE INDEX CONCURRENTLY idx_client_client_id ON client (client_id);
-ANALYZE client;
-```
+1. Pembuatan Database Indexing. menambahkan index tipe B-Tree pada kolom client_id untuk mengubah proses pencarian database
+   dari Sequential Scan yang berat menjadi Index Scan yang sangat cepat.
+   Agar proses pembuatan index tidak mengunci tabel (table locking) yang dapat mengganggu aktivitas baca/tulis aplikasi yang sedang berjalan, index dibuat menggunakan keyword CONCURRENTLY:
 
-Run `EXPLAIN (ANALYZE, BUFFERS)` again to confirm an index scan or index-only scan and lower buffer reads. `count(affiliates)` counts only non-NULL affiliate values; use `count(*)` only if the business question means “how many client rows” rather than “how many non-NULL affiliate values.” If the intended model is one affiliate per row, affiliates should be normalized into a separate indexed affiliate table instead of a `varchar` column.
+'''CREATE INDEX CONCURRENTLY idx_client_client_id ON client(client_id);'''
+
+2. Optimasi Query (Refactoring Kode Backend) merekomendasikan tim developer untuk mengoptimasi penarikan data di sisi backend dengan mengubah perhitungan berbasis kolom menjadi berbasis baris (wildcard):
+
+'''select count(*) from client where client_id = 'this_is_client_id';'''
+
+3. Untuk memastikan perbaikan berhasil, query diuji kembali menggunakan perintah 
+
+'''EXPLAIN ANALYZE:SQLEXPLAIN ANALYZE select count(*) from client where client_id = 'this_is_client_id';'''
+
+   - Perubahan Hasil:Perencanaan query (query plan) berubah dari Seq Scan yang berbiaya tinggi menjadi Bitmap Index Sca
+     (atau Index Scan menggunakan idx_client_client_id).
+   - Waktu Eksekusi (Execution Time): Turun drastis dari yang sebelumnya hitungan detik/menit menjadi hanya beberapa
+     milidetik ($ms$).
+   - Penggunaan Resource: Penggunaan CPU database kembali stabil dan tidak ada lagi lonjakan (spike) saat tim back-office
+     menarik data tersebut. Masalah selesai sepenuhnya.
