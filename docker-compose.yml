@@ -1,0 +1,7 @@
+services:
+  web:
+    image: pujosn/pujo-mifx-task:v1.4.0
+    container_name: pujo-mifx-web
+    ports:
+      - "8080:80"
+    restart: unless-stopped
