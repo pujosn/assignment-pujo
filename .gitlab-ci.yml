@@ -1,0 +1,60 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_IMAGE: pujosn/pujo-mifx-task
+
+build:
+  stage: build
+  image: docker:27-cli
+  services:
+    - name: docker:27-dind
+  before_script:
+    - echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+  script:
+    - docker build --tag "$DOCKER_IMAGE:$CI_COMMIT_SHORT_SHA" .
+    - docker push "$DOCKER_IMAGE:$CI_COMMIT_SHORT_SHA"
+  rules:
+    - changes:
+        - Dockerfile
+
+deploy:
+  stage: deploy
+  image: alpine:3.20
+  needs:
+    - job: build
+      optional: true
+  before_script:
+    - apk add --no-cache ansible openssh-client
+    - install -d -m 700 ~/.ssh
+    - printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+    - chmod 600 ~/.ssh/id_ed25519
+    - printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+  script:
+    - >-
+      ansible-playbook
+      -i "$DEPLOY_HOST,"
+      -u "$DEPLOY_USER"
+      --private-key ~/.ssh/id_ed25519
+      -e "compose_project_dir=$COMPOSE_PROJECT_DIR"
+      ansible/deploy.yml
+  rules:
+    - changes:
+        - Dockerfile
+        - docker-compose.yml
+
+
+
+# jawaban tugas C.Quiz
+# 
+# stages:
+  # - unittest
+  # - security-scan
+# 
+# security_scan:
+  # stage: security-scan
+  # script:
+    # - trivy repo ./
