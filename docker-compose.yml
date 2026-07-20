@@ -3,7 +3,7 @@ version: '3.8'
 services:
   web:
     image: pujosn/pujo-mifx-task:v1.8.0
-    container_name: pujo-mifx-web
+    container_name: pujo-mifx-web-app
     ports:
       - "8080:80"
     volumes:
@@ -14,7 +14,7 @@ services:
 
   db:
     image: postgres:16-alpine
-    container_name: pujo-mifx-db
+    container_name: pujo-mifx-db-app
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?Set POSTGRES_SUPERUSER_PASSWORD in .env}

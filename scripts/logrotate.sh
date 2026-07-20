@@ -3,9 +3,9 @@
 set -e
 
 # --- KONFIGURASI TUGAS ---
-TARGET_DIR="/home/pujo/Music/pujo-assignment-mfix/scripts/logstest" # Ganti dengan direktori log tujuanmu
-LOG_FILE="/var/log/custom_logrotate.log"               # File untuk mencatat aksi skrip ini
-MAX_SIZE_MB=5                                           # Batas ukuran file (5 MB)
+TARGET_DIR="/home/pujo/Music/pujo-assignment-mfix/scripts/logstest" 
+LOG_FILE="/var/log/custom_logrotate.log"              
+MAX_SIZE_MB=5                                           
 
 # Konversi ukuran ke satuan Bytes untuk perbandingan matematika
 # 5 MB = 5 * 1024 * 1024 Bytes
